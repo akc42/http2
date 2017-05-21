@@ -104,8 +104,10 @@ using v8::Integer;
 using v8::Isolate;
 using v8::Local;
 using v8::Maybe;
+using v8::MaybeLocal;
 using v8::Null;
 using v8::Object;
+using v8::ObjectTemplate;
 using v8::Persistent;
 using v8::PropertyAttribute;
 using v8::PropertyCallbackInfo;
@@ -151,7 +153,6 @@ const char* const root_certs[] = {
 std::string extra_root_certs_file;  // NOLINT(runtime/string)
 
 X509_STORE* root_cert_store;
-std::vector<X509*> root_certs_vector;
 
 // Just to generate static methods
 template class SSLWrap<TLSWrap>;
@@ -228,7 +229,7 @@ static void crypto_lock_cb(int mode, int n, const char* file, int line) {
 }
 
 
-static int CryptoPemCallback(char *buf, int size, int rwflag, void *u) {
+static int PasswordCallback(char *buf, int size, int rwflag, void *u) {
   if (u) {
     size_t buflen = static_cast<size_t>(size);
     size_t len = strlen(static_cast<const char*>(u));
@@ -237,6 +238,16 @@ static int CryptoPemCallback(char *buf, int size, int rwflag, void *u) {
     return len;
   }
 
+  return 0;
+}
+
+
+// This callback is used to avoid the default passphrase callback in OpenSSL
+// which will typically prompt for the passphrase. The prompting is designed
+// for the OpenSSL CLI, but works poorly for Node.js because it involves
+// synchronous interaction with the controlling terminal, something we never
+// want, and use this function to avoid it.
+static int NoPasswordCallback(char *buf, int size, int rwflag, void *u) {
   return 0;
 }
 
@@ -484,7 +495,7 @@ void SecureContext::SetKey(const FunctionCallbackInfo<Value>& args) {
 
   EVP_PKEY* key = PEM_read_bio_PrivateKey(bio,
                                           nullptr,
-                                          CryptoPemCallback,
+                                          PasswordCallback,
                                           len == 1 ? nullptr : *passphrase);
 
   if (!key) {
@@ -610,7 +621,7 @@ int SSL_CTX_use_certificate_chain(SSL_CTX* ctx,
   // that we are interested in
   ERR_clear_error();
 
-  x = PEM_read_bio_X509_AUX(in, nullptr, CryptoPemCallback, nullptr);
+  x = PEM_read_bio_X509_AUX(in, nullptr, NoPasswordCallback, nullptr);
 
   if (x == nullptr) {
     SSLerr(SSL_F_SSL_CTX_USE_CERTIFICATE_CHAIN_FILE, ERR_R_PEM_LIB);
@@ -628,7 +639,10 @@ int SSL_CTX_use_certificate_chain(SSL_CTX* ctx,
     goto done;
   }
 
-  while ((extra = PEM_read_bio_X509(in, nullptr, CryptoPemCallback, nullptr))) {
+  while ((extra = PEM_read_bio_X509(in,
+                                    nullptr,
+                                    NoPasswordCallback,
+                                    nullptr))) {
     if (sk_X509_push(extra_certs, extra))
       continue;
 
@@ -721,10 +735,11 @@ static int X509_up_ref(X509* cert) {
 
 
 static X509_STORE* NewRootCertStore() {
+  static std::vector<X509*> root_certs_vector;
   if (root_certs_vector.empty()) {
     for (size_t i = 0; i < arraysize(root_certs); i++) {
       BIO* bp = NodeBIO::NewFixed(root_certs[i], strlen(root_certs[i]));
-      X509 *x509 = PEM_read_bio_X509(bp, nullptr, CryptoPemCallback, nullptr);
+      X509 *x509 = PEM_read_bio_X509(bp, nullptr, NoPasswordCallback, nullptr);
       BIO_free(bp);
 
       // Parse errors from the built-in roots are fatal.
@@ -767,7 +782,7 @@ void SecureContext::AddCACert(const FunctionCallbackInfo<Value>& args) {
 
   X509_STORE* cert_store = SSL_CTX_get_cert_store(sc->ctx_);
   while (X509* x509 =
-             PEM_read_bio_X509(bio, nullptr, CryptoPemCallback, nullptr)) {
+             PEM_read_bio_X509(bio, nullptr, NoPasswordCallback, nullptr)) {
     if (cert_store == root_cert_store) {
       cert_store = NewRootCertStore();
       SSL_CTX_set_cert_store(sc->ctx_, cert_store);
@@ -799,7 +814,7 @@ void SecureContext::AddCRL(const FunctionCallbackInfo<Value>& args) {
     return;
 
   X509_CRL* crl =
-      PEM_read_bio_X509_CRL(bio, nullptr, CryptoPemCallback, nullptr);
+      PEM_read_bio_X509_CRL(bio, nullptr, NoPasswordCallback, nullptr);
 
   if (crl == nullptr) {
     BIO_free_all(bio);
@@ -838,7 +853,7 @@ static unsigned long AddCertsFromFile(  // NOLINT(runtime/int)
   }
 
   while (X509* x509 =
-      PEM_read_bio_X509(bio, nullptr, CryptoPemCallback, nullptr)) {
+      PEM_read_bio_X509(bio, nullptr, NoPasswordCallback, nullptr)) {
     X509_STORE_add_cert(store, x509);
     X509_free(x509);
   }
@@ -2733,6 +2748,7 @@ void Connection::Initialize(Environment* env, Local<Object> target) {
   t->InstanceTemplate()->SetInternalFieldCount(1);
   t->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "Connection"));
 
+  env->SetProtoMethod(t, "getAsyncId", AsyncWrap::GetAsyncId);
   env->SetProtoMethod(t, "encIn", Connection::EncIn);
   env->SetProtoMethod(t, "clearOut", Connection::ClearOut);
   env->SetProtoMethod(t, "clearIn", Connection::ClearIn);
@@ -3798,6 +3814,10 @@ void Hmac::HmacDigest(const FunctionCallbackInfo<Value>& args) {
     encoding = ParseEncoding(env->isolate(), args[0], BUFFER);
   }
 
+  if (encoding == UCS2) {
+    return env->ThrowError("hmac.digest() does not support UTF-16");
+  }
+
   unsigned char* md_value = nullptr;
   unsigned int md_len = 0;
 
@@ -3807,12 +3827,20 @@ void Hmac::HmacDigest(const FunctionCallbackInfo<Value>& args) {
     md_len = 0;
   }
 
-  Local<Value> rc = StringBytes::Encode(env->isolate(),
-                                        reinterpret_cast<const char*>(md_value),
-                                        md_len,
-                                        encoding);
+  Local<Value> error;
+  MaybeLocal<Value> rc =
+      StringBytes::Encode(env->isolate(),
+                          reinterpret_cast<const char*>(md_value),
+                          md_len,
+                          encoding,
+                          &error);
   delete[] md_value;
-  args.GetReturnValue().Set(rc);
+  if (rc.IsEmpty()) {
+    CHECK(!error.IsEmpty());
+    env->isolate()->ThrowException(error);
+    return;
+  }
+  args.GetReturnValue().Set(rc.ToLocalChecked());
 }
 
 
@@ -3921,6 +3949,10 @@ void Hash::HashDigest(const FunctionCallbackInfo<Value>& args) {
     encoding = ParseEncoding(env->isolate(), args[0], BUFFER);
   }
 
+  if (encoding == UCS2) {
+    return env->ThrowError("hash.digest() does not support UTF-16");
+  }
+
   unsigned char md_value[EVP_MAX_MD_SIZE];
   unsigned int md_len;
 
@@ -3928,11 +3960,19 @@ void Hash::HashDigest(const FunctionCallbackInfo<Value>& args) {
   EVP_MD_CTX_cleanup(&hash->mdctx_);
   hash->finalized_ = true;
 
-  Local<Value> rc = StringBytes::Encode(env->isolate(),
-                                        reinterpret_cast<const char*>(md_value),
-                                        md_len,
-                                        encoding);
-  args.GetReturnValue().Set(rc);
+  Local<Value> error;
+  MaybeLocal<Value> rc =
+      StringBytes::Encode(env->isolate(),
+                          reinterpret_cast<const char*>(md_value),
+                          md_len,
+                          encoding,
+                          &error);
+  if (rc.IsEmpty()) {
+    CHECK(!error.IsEmpty());
+    env->isolate()->ThrowException(error);
+    return;
+  }
+  args.GetReturnValue().Set(rc.ToLocalChecked());
 }
 
 
@@ -4133,7 +4173,7 @@ SignBase::Error Sign::SignFinal(const char* key_pem,
 
   pkey = PEM_read_bio_PrivateKey(bp,
                                  nullptr,
-                                 CryptoPemCallback,
+                                 PasswordCallback,
                                  const_cast<char*>(passphrase));
 
   // Errors might be injected into OpenSSL's error stack
@@ -4358,12 +4398,12 @@ SignBase::Error Verify::VerifyFinal(const char* key_pem,
   // Split this out into a separate function once we have more than one
   // consumer of public keys.
   if (strncmp(key_pem, PUBLIC_KEY_PFX, PUBLIC_KEY_PFX_LEN) == 0) {
-    pkey = PEM_read_bio_PUBKEY(bp, nullptr, CryptoPemCallback, nullptr);
+    pkey = PEM_read_bio_PUBKEY(bp, nullptr, NoPasswordCallback, nullptr);
     if (pkey == nullptr)
       goto exit;
   } else if (strncmp(key_pem, PUBRSA_KEY_PFX, PUBRSA_KEY_PFX_LEN) == 0) {
     RSA* rsa =
-        PEM_read_bio_RSAPublicKey(bp, nullptr, CryptoPemCallback, nullptr);
+        PEM_read_bio_RSAPublicKey(bp, nullptr, PasswordCallback, nullptr);
     if (rsa) {
       pkey = EVP_PKEY_new();
       if (pkey)
@@ -4374,7 +4414,7 @@ SignBase::Error Verify::VerifyFinal(const char* key_pem,
       goto exit;
   } else {
     // X.509 fallback
-    x509 = PEM_read_bio_X509(bp, nullptr, CryptoPemCallback, nullptr);
+    x509 = PEM_read_bio_X509(bp, nullptr, NoPasswordCallback, nullptr);
     if (x509 == nullptr)
       goto exit;
 
@@ -4501,7 +4541,7 @@ bool PublicKeyCipher::Cipher(const char* key_pem,
       goto exit;
   } else if (operation == kPublic &&
              strncmp(key_pem, CERTIFICATE_PFX, CERTIFICATE_PFX_LEN) == 0) {
-    x509 = PEM_read_bio_X509(bp, nullptr, CryptoPemCallback, nullptr);
+    x509 = PEM_read_bio_X509(bp, nullptr, NoPasswordCallback, nullptr);
     if (x509 == nullptr)
       goto exit;
 
@@ -4511,7 +4551,7 @@ bool PublicKeyCipher::Cipher(const char* key_pem,
   } else {
     pkey = PEM_read_bio_PrivateKey(bp,
                                    nullptr,
-                                   CryptoPemCallback,
+                                   PasswordCallback,
                                    const_cast<char*>(passphrase));
     if (pkey == nullptr)
       goto exit;
@@ -5286,7 +5326,7 @@ class PBKDF2Request : public AsyncWrap {
                 char* salt,
                 int iter,
                 int keylen)
-      : AsyncWrap(env, object, AsyncWrap::PROVIDER_CRYPTO),
+      : AsyncWrap(env, object, AsyncWrap::PROVIDER_PBKDF2REQUEST),
         digest_(digest),
         error_(0),
         passlen_(passlen),
@@ -5505,7 +5545,8 @@ void PBKDF2(const FunctionCallbackInfo<Value>& args) {
     digest = EVP_sha1();
   }
 
-  obj = env->NewInternalFieldObject();
+  obj = env->pbkdf2_constructor_template()->
+      NewInstance(env->context()).ToLocalChecked();
   req = new PBKDF2Request(env,
                           obj,
                           digest,
@@ -5557,7 +5598,7 @@ class RandomBytesRequest : public AsyncWrap {
                      size_t size,
                      char* data,
                      FreeMode free_mode)
-      : AsyncWrap(env, object, AsyncWrap::PROVIDER_CRYPTO),
+      : AsyncWrap(env, object, AsyncWrap::PROVIDER_RANDOMBYTESREQUEST),
         error_(0),
         size_(size),
         data_(data),
@@ -5709,7 +5750,8 @@ void RandomBytes(const FunctionCallbackInfo<Value>& args) {
   if (size < 0 || size > Buffer::kMaxLength)
     return env->ThrowRangeError("size is not a valid Smi");
 
-  Local<Object> obj = env->NewInternalFieldObject();
+  Local<Object> obj = env->randombytes_constructor_template()->
+      NewInstance(env->context()).ToLocalChecked();
   char* data = node::Malloc(size);
   RandomBytesRequest* req =
       new RandomBytesRequest(env,
@@ -5747,7 +5789,8 @@ void RandomBytesBuffer(const FunctionCallbackInfo<Value>& args) {
   int64_t offset = args[1]->IntegerValue();
   int64_t size = args[2]->IntegerValue();
 
-  Local<Object> obj = env->NewInternalFieldObject();
+  Local<Object> obj = env->randombytes_constructor_template()->
+      NewInstance(env->context()).ToLocalChecked();
   obj->Set(env->context(), env->buffer_string(), args[0]).FromJust();
   char* data = Buffer::Data(args[0]);
   data += offset;
@@ -6224,6 +6267,20 @@ void InitCrypto(Local<Object> target,
                  PublicKeyCipher::Cipher<PublicKeyCipher::kPublic,
                                          EVP_PKEY_verify_recover_init,
                                          EVP_PKEY_verify_recover>);
+
+  Local<FunctionTemplate> pb = FunctionTemplate::New(env->isolate());
+  pb->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "PBKDF2"));
+  env->SetProtoMethod(pb, "getAsyncId", AsyncWrap::GetAsyncId);
+  Local<ObjectTemplate> pbt = pb->InstanceTemplate();
+  pbt->SetInternalFieldCount(1);
+  env->set_pbkdf2_constructor_template(pbt);
+
+  Local<FunctionTemplate> rb = FunctionTemplate::New(env->isolate());
+  rb->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "RandomBytes"));
+  env->SetProtoMethod(rb, "getAsyncId", AsyncWrap::GetAsyncId);
+  Local<ObjectTemplate> rbt = rb->InstanceTemplate();
+  rbt->SetInternalFieldCount(1);
+  env->set_randombytes_constructor_template(rbt);
 }
 
 }  // namespace crypto
