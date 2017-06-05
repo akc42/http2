@@ -11,14 +11,16 @@ server.on('stream', common.mustCall(onStream));
 
 function onStream(stream, headers, flags) {
   stream.rstWithCancel();
-  stream.additionalHeaders({
-    ':status': 123,
-    abc: 123
-  });
-  setImmediate(() => {
-    stream.respond({':status': 200});
-    stream.end('data');
-  });
+
+  assert.throws(() => {
+    stream.additionalHeaders({
+      ':status': 123,
+      abc: 123
+    });
+  }, common.expectsError({
+    code: 'ERR_HTTP2_INVALID_STREAM',
+    message: /^The stream has been destroyed$/
+  }));
 }
 
 server.listen(0);

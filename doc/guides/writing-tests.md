@@ -56,7 +56,7 @@ const common = require('../common');
 The first line enables strict mode. All tests should be in strict mode unless
 the nature of the test requires that the test run without it.
 
-The second line loads the `common` module. The `common` module is a helper
+The second line loads the `common` module. The [`common` module][] is a helper
 module that provides useful tools for the tests.
 
 Even if a test uses no functions or other properties exported by `common`,
@@ -319,14 +319,14 @@ static void at_exit_callback(void* arg) {
 ```
 
 Next add the test to the `sources` in the `cctest` target in node.gyp:
-```
+```console
 'sources': [
   'test/cctest/test_env.cc',
   ...
 ],
 ```
 The test can be executed by running the `cctest` target:
-```
+```console
 $ make cctest
 ```
 
@@ -340,3 +340,4 @@ will depend on what is being tested if this is required or not.
 
 [Google Test]: https://github.com/google/googletest
 [Test fixture]: https://github.com/google/googletest/blob/master/googletest/docs/Primer.md#test-fixtures-using-the-same-data-configuration-for-multiple-tests
+[`common` module]: https://github.com/nodejs/node/blob/master/test/common/README.md

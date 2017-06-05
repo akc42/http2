@@ -360,7 +360,7 @@ intl_optgroup.add_option('--without-intl',
     action='store_const',
     dest='with_intl',
     const='none',
-    help='Disable Intl, same as --with-intl=none')
+    help='Disable Intl, same as --with-intl=none (disables inspector)')
 
 intl_optgroup.add_option('--with-icu-path',
     action='store',
@@ -394,10 +394,15 @@ intl_optgroup.add_option('--download-path',
 
 parser.add_option_group(intl_optgroup)
 
+http2_optgroup.add_option('--debug-http2',
+    action='store_true',
+    dest='debug_http2',
+    help='build with http2 debug statements on (default is false)')
+
 http2_optgroup.add_option('--debug-nghttp2',
     action='store_true',
     dest='debug_nghttp2',
-    help='Build nghttp2 with DEBUGBUILD')
+    help='build nghttp2 with DEBUGBUILD (default is false)')
 
 parser.add_option('--with-perfctr',
     action='store_true',
@@ -438,7 +443,7 @@ parser.add_option('--without-snapshot',
 parser.add_option('--without-ssl',
     action='store_true',
     dest='without_ssl',
-    help='build without SSL')
+    help='build without SSL (disables crypto, https, inspector, etc.)')
 
 parser.add_option('--without-node-options',
     action='store_true',
@@ -474,7 +479,7 @@ parser.add_option('--no-browser-globals',
 parser.add_option('--without-inspector',
     action='store_true',
     dest='without_inspector',
-    help='disable experimental V8 inspector support')
+    help='disable the V8 inspector protocol')
 
 parser.add_option('--shared',
     action='store_true',
@@ -898,6 +903,11 @@ def configure_node(o):
   if options.enable_static:
     o['variables']['node_target_type'] = 'static_library'
 
+  if options.debug_http2:
+    o['variables']['debug_http2'] = 1
+  else:
+    o['variables']['debug_http2'] = 'false'
+
   if options.debug_nghttp2:
     o['variables']['debug_nghttp2'] = 1
   else:
@@ -966,6 +976,7 @@ def configure_v8(o):
   o['variables']['v8_no_strict_aliasing'] = 1  # Work around compiler bugs.
   o['variables']['v8_optimized_debug'] = 0  # Compile with -O0 in debug builds.
   o['variables']['v8_random_seed'] = 0  # Use a random seed for hash tables.
+  o['variables']['v8_promise_internal_field_count'] = 1 # Add internal field to promises for async hooks.
   o['variables']['v8_use_snapshot'] = 'false' if options.without_snapshot else 'true'
   o['variables']['node_use_v8_platform'] = b(not options.without_v8_platform)
   o['variables']['node_use_bundled_v8'] = b(not options.without_bundled_v8)

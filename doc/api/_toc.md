@@ -25,6 +25,7 @@
 * [HTTP](http.html)
 * [HTTP/2](http2.html)
 * [HTTPS](https.html)
+* [Inspector](inspector.html)
 * [Modules](modules.html)
 * [Net](net.html)
 * [OS](os.html)

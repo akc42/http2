@@ -114,6 +114,7 @@ namespace node {
   V(enumerable_string, "enumerable")                                          \
   V(idle_string, "idle")                                                      \
   V(irq_string, "irq")                                                        \
+  V(enablepush_string, "enablePush")                                          \
   V(encoding_string, "encoding")                                              \
   V(enter_string, "enter")                                                    \
   V(env_pairs_string, "envPairs")                                             \
@@ -140,15 +141,17 @@ namespace node {
   V(goaway_string, "onGoaway")                                                \
   V(gid_string, "gid")                                                        \
   V(handle_string, "handle")                                                  \
-  V(headers_string, "onHeaders")                                              \
+  V(headertablesize_string, "headerTableSize")                                \
   V(heap_total_string, "heapTotal")                                           \
   V(heap_used_string, "heapUsed")                                             \
   V(homedir_string, "homedir")                                                \
   V(hostmaster_string, "hostmaster")                                          \
+  V(id_string, "id")                                                          \
   V(ignore_string, "ignore")                                                  \
   V(immediate_callback_string, "_immediateCallback")                          \
   V(infoaccess_string, "infoAccess")                                          \
   V(inherit_string, "inherit")                                                \
+  V(initialwindowsize_string, "initialWindowSize")                            \
   V(input_string, "input")                                                    \
   V(internal_string, "internal")                                              \
   V(ipv4_string, "IPv4")                                                      \
@@ -160,6 +163,9 @@ namespace node {
   V(kill_signal_string, "killSignal")                                         \
   V(mac_string, "mac")                                                        \
   V(max_buffer_string, "maxBuffer")                                           \
+  V(maxconcurrentstreams_string, "maxConcurrentStreams")                      \
+  V(maxframesize_string, "maxFrameSize")                                      \
+  V(maxheaderlistsize_string, "maxHeaderListSize")                            \
   V(message_string, "message")                                                \
   V(minttl_string, "minttl")                                                  \
   V(model_string, "model")                                                    \
@@ -177,19 +183,25 @@ namespace node {
   V(ondone_string, "ondone")                                                  \
   V(onerror_string, "onerror")                                                \
   V(onexit_string, "onexit")                                                  \
+  V(ongetpadding_string, "ongetpadding")                                      \
   V(onhandshakedone_string, "onhandshakedone")                                \
   V(onhandshakestart_string, "onhandshakestart")                              \
+  V(onheaders_string, "onheaders")                                            \
   V(onmessage_string, "onmessage")                                            \
   V(onnewsession_string, "onnewsession")                                      \
   V(onnewsessiondone_string, "onnewsessiondone")                              \
   V(onocspresponse_string, "onocspresponse")                                  \
+  V(onpriority_string, "onpriority")                                          \
   V(onread_string, "onread")                                                  \
   V(onreadstart_string, "onreadstart")                                        \
   V(onreadstop_string, "onreadstop")                                          \
   V(onselect_string, "onselect")                                              \
+  V(onsettings_string, "onsettings")                                          \
   V(onshutdown_string, "onshutdown")                                          \
   V(onsignal_string, "onsignal")                                              \
   V(onstop_string, "onstop")                                                  \
+  V(onstreamclose_string, "onstreamclose")                                    \
+  V(ontrailers_string, "ontrailers")                                          \
   V(onwrite_string, "onwrite")                                                \
   V(output_string, "output")                                                  \
   V(order_string, "order")                                                    \
@@ -230,7 +242,7 @@ namespace node {
   V(stack_string, "stack")                                                    \
   V(status_string, "status")                                                  \
   V(stdio_string, "stdio")                                                    \
-  V(streamclose_string, "onStreamClose")                                      \
+  V(stream_string, "stream")                                                  \
   V(subject_string, "subject")                                                \
   V(subjectaltname_string, "subjectaltname")                                  \
   V(sys_string, "sys")                                                        \
@@ -259,6 +271,13 @@ namespace node {
   V(write_queue_size_string, "writeQueueSize")                                \
   V(x_forwarded_string, "x-forwarded-for")                                    \
   V(zero_return_string, "ZERO_RETURN")                                        \
+  V(maxdeflatedynamictablesize_string, "maxDeflateDynamicTableSize")          \
+  V(maxreservedremotestreams_string, "maxReservedRemoteStreams")              \
+  V(maxsendheaderblocklength_string, "maxSendHeaderBlockLength")              \
+  V(peermaxconcurrentstreams_string, "peerMaxConcurrentStreams")              \
+  V(nohttpmessaging_string, "noHttpMessaging")                                \
+  V(norecvclientmagic_string, "noRecvClientMagic")                            \
+  V(paddingstrategy_string, "paddingStrategy")
 
 #define ENVIRONMENT_STRONG_PERSISTENT_PROPERTIES(V)                           \
   V(as_external, v8::External)                                                \
@@ -556,6 +575,10 @@ class Environment {
   inline uv_timer_t* cares_timer_handle();
   inline ares_channel cares_channel();
   inline ares_channel* cares_channel_ptr();
+  inline bool cares_query_last_ok();
+  inline void set_cares_query_last_ok(bool ok);
+  inline bool cares_is_servers_default();
+  inline void set_cares_is_servers_default(bool is_default);
   inline node_ares_task_list* cares_task_list();
   inline IsolateData* isolate_data() const;
 
@@ -694,6 +717,8 @@ class Environment {
   const uint64_t timer_base_;
   uv_timer_t cares_timer_handle_;
   ares_channel cares_channel_;
+  bool cares_query_last_ok_;
+  bool cares_is_servers_default_;
   node_ares_task_list cares_task_list_;
   bool using_domains_;
   bool printed_error_;

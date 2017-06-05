@@ -46,6 +46,7 @@ namespace node {
   V(PIPECONNECTWRAP)                                                          \
   V(PIPEWRAP)                                                                 \
   V(PROCESSWRAP)                                                              \
+  V(PROMISE)                                                                  \
   V(QUERYWRAP)                                                                \
   V(SHUTDOWNWRAP)                                                             \
   V(SIGNALWRAP)                                                               \
@@ -87,7 +88,8 @@ class AsyncWrap : public BaseObject {
 
   AsyncWrap(Environment* env,
             v8::Local<v8::Object> object,
-            ProviderType provider);
+            ProviderType provider,
+            bool silent = false);
 
   virtual ~AsyncWrap();
 
@@ -102,13 +104,22 @@ class AsyncWrap : public BaseObject {
   static void AsyncReset(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void QueueDestroyId(const v8::FunctionCallbackInfo<v8::Value>& args);
 
+  static void EmitAsyncInit(Environment* env,
+                            v8::Local<v8::Object> object,
+                            v8::Local<v8::String> type,
+                            double id,
+                            double trigger_id);
+
+  static bool EmitBefore(Environment* env, double id);
+  static bool EmitAfter(Environment* env, double id);
+
   inline ProviderType provider_type() const;
 
   inline double get_id() const;
 
   inline double get_trigger_id() const;
 
-  void AsyncReset();
+  void AsyncReset(bool silent = false);
 
   // Only call these within a valid HandleScope.
   // TODO(trevnorris): These should return a MaybeLocal.
@@ -133,6 +144,9 @@ class AsyncWrap : public BaseObject {
 };
 
 void LoadAsyncWrapperInfo(Environment* env);
+
+bool DomainEnter(Environment* env, v8::Local<v8::Object> object);
+bool DomainExit(Environment* env, v8::Local<v8::Object> object);
 
 }  // namespace node
 
